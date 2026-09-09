@@ -164,6 +164,13 @@ export interface AuditResult {
   scores: AuditScores;
   pagesCrawledCount: number;
   pagesDiscoveredCount: number;
+  isPartial?: boolean;
+  rateLimitInfo?: {
+    pagesAnalyzed: number;
+    pagesRateLimited: number;
+    pagesRemaining: number;
+    message: string;
+  };
   issueCounts: {
     total: number;
     critical: number;
@@ -189,6 +196,10 @@ export interface AuditErrorDetails {
     | 'connection_refused'
     | 'timeout'
     | 'unreachable'
+    | 'rate_limited'
+    | 'forbidden'
+    | 'not_found'
+    | 'server_error'
     | 'http_error'
     | 'redirect_loop'
     | 'crawl_error';
@@ -197,6 +208,13 @@ export interface AuditErrorDetails {
   message: string;
   url: string;
   statusCode?: number;
+  rateLimitInfo?: {
+    pagesAnalyzed: number;
+    pagesRateLimited: number;
+    pagesRemaining: number;
+    retryAfterSeconds?: number;
+  };
+  canRetry?: boolean;
 }
 
 export interface CrawlProgress {
@@ -243,4 +261,5 @@ export interface AuditHistoryItem {
   scoreStatus: string;
   criticalIssues: number;
   warnings: number;
+  isPartial?: boolean;
 }

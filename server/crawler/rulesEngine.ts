@@ -69,14 +69,40 @@ export class RulesEngine {
       );
     }
 
-    const other4xxPages = pages.filter(p => p.statusCode >= 400 && p.statusCode < 500 && p.statusCode !== 404 && p.statusCode !== 410).map(p => p.url);
+    const rateLimitedPages = pages.filter(p => p.statusCode === 429).map(p => p.url);
+    if (rateLimitedPages.length > 0) {
+      addIssue(
+        'http-429-rate-limited',
+        'Technical',
+        'warning',
+        'Server Rate Limited Requests (HTTP 429)',
+        `${rateLimitedPages.length} page(s) were temporarily rate-limited by the host server during crawling.`,
+        'The website is reachable and functioning, but enforces automated rate limits. Consider adding a Crawl-delay directive in robots.txt or configuring firewall whitelisting for verified search engine bots.',
+        rateLimitedPages
+      );
+    }
+
+    const forbiddenPages = pages.filter(p => p.statusCode === 403).map(p => p.url);
+    if (forbiddenPages.length > 0) {
+      addIssue(
+        'http-403-forbidden',
+        'Technical',
+        'warning',
+        'Forbidden Access (HTTP 403)',
+        `${forbiddenPages.length} crawled URL(s) returned 403 Forbidden. The host server or firewall actively blocked crawler requests.`,
+        'Verify directory permissions, firewall/WAF rule sets, and internal links pointing to private or protected resources.',
+        forbiddenPages
+      );
+    }
+
+    const other4xxPages = pages.filter(p => p.statusCode >= 400 && p.statusCode < 500 && p.statusCode !== 404 && p.statusCode !== 410 && p.statusCode !== 429 && p.statusCode !== 403).map(p => p.url);
     if (other4xxPages.length > 0) {
       addIssue(
         'http-4xx-errors',
         'Technical',
         'warning',
         'Client Error Responses (4xx)',
-        `${other4xxPages.length} crawled URL(s) returned 4xx client errors (e.g. 401 Unauthorized, 403 Forbidden).`,
+        `${other4xxPages.length} crawled URL(s) returned 4xx client errors.`,
         'Verify permissions and remove or update internal links pointing to restricted pages.',
         other4xxPages
       );
@@ -95,7 +121,7 @@ export class RulesEngine {
       );
     }
 
-    if (serverErrorPages.length === 0 && notFoundPages.length === 0 && other4xxPages.length === 0 && connectionFailurePages.length === 0 && pages.length > 0) {
+    if (serverErrorPages.length === 0 && notFoundPages.length === 0 && rateLimitedPages.length === 0 && forbiddenPages.length === 0 && other4xxPages.length === 0 && connectionFailurePages.length === 0 && pages.length > 0) {
       addIssue(
         'passed-http-status',
         'Technical',

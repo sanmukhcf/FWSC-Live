@@ -1,4 +1,5 @@
 import type { RobotsAnalysis } from '../../src/types';
+import { CRAWLER_USER_AGENT } from './constants';
 
 export class RobotsParser {
   static async fetchAndParse(baseUrl: string): Promise<RobotsAnalysis> {
@@ -19,7 +20,7 @@ export class RobotsParser {
       const response = await fetch(robotsUrl, {
         signal: controller.signal,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; DigiVirusBot/1.0; +https://digivirus.in/bot)',
+          'User-Agent': CRAWLER_USER_AGENT,
           'Accept': 'text/plain,text/html,*/*',
         },
       });
