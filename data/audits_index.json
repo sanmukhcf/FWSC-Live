@@ -1,0 +1,32 @@
+[
+  {
+    "id": "audit_1788947721035_omp66",
+    "websiteUrl": "https://this-domain-definitely-does-not-exist-998877.org/",
+    "createdAt": "2026-09-09T09:55:20.799Z",
+    "pagesCrawled": 1,
+    "score": 84,
+    "scoreStatus": "Good",
+    "criticalIssues": 3,
+    "warnings": 7
+  },
+  {
+    "id": "audit_1788945511104_t66wm",
+    "websiteUrl": "https://growthhackers.digital/",
+    "createdAt": "2026-09-09T09:17:41.471Z",
+    "pagesCrawled": 50,
+    "score": 94,
+    "scoreStatus": "Excellent",
+    "criticalIssues": 0,
+    "warnings": 5
+  },
+  {
+    "id": "audit_1788945151082_0ihl7",
+    "websiteUrl": "https://digivirus.in/",
+    "createdAt": "2026-09-09T09:11:18.815Z",
+    "pagesCrawled": 50,
+    "score": 91,
+    "scoreStatus": "Excellent",
+    "criticalIssues": 1,
+    "warnings": 5
+  }
+]

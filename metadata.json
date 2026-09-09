@@ -1,0 +1,6 @@
+{
+  "name": "DigiVirus SEO Audit Tool",
+  "description": "FWSC - Free Website SEO Checker by digiVirus. 100% API-free website crawling and SEO analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
