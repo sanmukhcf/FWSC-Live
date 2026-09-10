@@ -185,22 +185,22 @@ export async function resolveAndValidateDns(hostname: string, timeoutMs = 6000):
     if (code === 'ENOTFOUND' || code === 'NXDOMAIN' || code === 'EAI_NONAME' || code === 'EAI_AGAIN') {
       return {
         isValid: false,
-        errorType: 'DNS Resolution Failed',
-        reason: code,
-        message: 'The domain could not be resolved. Please check the website address and try again.',
+        errorType: 'Website Not Found',
+        reason: 'NXDOMAIN',
+        message: 'Website Not Found: The domain does not exist or has no active DNS records (NXDOMAIN / ENOTFOUND).',
       };
     }
     if (code === 'ETIMEDOUT') {
       return {
         isValid: false,
-        errorType: 'DNS Resolution Failed',
+        errorType: 'Website Could Not Be Reached',
         reason: 'ETIMEDOUT',
-        message: 'DNS query timed out while trying to resolve the domain.',
+        message: 'Website Could Not Be Reached: DNS query timed out while trying to resolve the domain.',
       };
     }
     return {
       isValid: false,
-      errorType: 'DNS Resolution Failed',
+      errorType: 'Website Could Not Be Reached',
       reason: code,
       message: `Could not resolve domain: ${err.message || code}`,
     };

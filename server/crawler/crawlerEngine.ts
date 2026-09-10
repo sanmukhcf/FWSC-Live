@@ -114,9 +114,9 @@ export class CrawlerEngine {
       if (!dnsResult.isValid) {
         throw new AuditExecutionError({
           type: dnsResult.reason === 'SSRF_RESTRICTED_IP' ? 'restricted_ip' : 'dns_failed',
-          errorType: dnsResult.errorType || 'DNS Resolution Failed',
-          reason: dnsResult.reason || 'ENOTFOUND',
-          message: dnsResult.message || 'The domain could not be resolved. Please check the website address.',
+          errorType: dnsResult.errorType || 'Website Not Found',
+          reason: dnsResult.reason || 'NXDOMAIN',
+          message: dnsResult.message || 'Website Not Found: The domain does not exist or has no active DNS records.',
           url: this.targetUrl,
         });
       }
@@ -181,9 +181,9 @@ export class CrawlerEngine {
             if (code === 'ECONNREFUSED') {
               throw new AuditExecutionError({
                 type: 'connection_refused',
-                errorType: 'Connection Refused',
+                errorType: 'Website Could Not Be Reached',
                 reason: 'ECONNREFUSED',
-                message: 'Website server refused the connection. The server may be offline or port is closed.',
+                message: 'Website Could Not Be Reached: The website server refused connection on port 80/443.',
                 url: currentCheckUrl,
                 canRetry: true,
               });
@@ -191,9 +191,9 @@ export class CrawlerEngine {
             if (code === 'ETIMEDOUT' || err.name === 'AbortError') {
               throw new AuditExecutionError({
                 type: 'timeout',
-                errorType: 'Connection Timed Out',
+                errorType: 'Website Could Not Be Reached',
                 reason: 'ETIMEDOUT',
-                message: 'Website server took too long to respond (timeout of 12 seconds exceeded).',
+                message: 'Website Could Not Be Reached: The server took more than 12 seconds to respond (timeout exceeded).',
                 url: currentCheckUrl,
                 canRetry: true,
               });
@@ -201,18 +201,18 @@ export class CrawlerEngine {
             if (code === 'ENETUNREACH' || code === 'EHOSTUNREACH') {
               throw new AuditExecutionError({
                 type: 'unreachable',
-                errorType: 'Server Unreachable',
+                errorType: 'Website Could Not Be Reached',
                 reason: code,
-                message: 'Website server is unreachable over the network.',
+                message: 'Website Could Not Be Reached: The host server is unreachable over the network.',
                 url: currentCheckUrl,
                 canRetry: true,
               });
             }
             throw new AuditExecutionError({
               type: 'connection_refused',
-              errorType: 'Connection Failed',
+              errorType: 'Website Could Not Be Reached',
               reason: code,
-              message: `Failed to connect to website: ${err.message || code}`,
+              message: `Website Could Not Be Reached: ${err.message || code}`,
               url: currentCheckUrl,
               canRetry: true,
             });
@@ -222,9 +222,9 @@ export class CrawlerEngine {
         if (!res) {
           throw new AuditExecutionError({
             type: 'connection_refused',
-            errorType: 'Connection Failed',
+            errorType: 'Website Could Not Be Reached',
             reason: 'NO_RESPONSE',
-            message: 'Failed to obtain a response from website server.',
+            message: 'Website Could Not Be Reached: No response was returned from the server.',
             url: currentCheckUrl,
             canRetry: true,
           });
@@ -317,9 +317,9 @@ export class CrawlerEngine {
       if (rootStatus === 404 || rootStatus === 410) {
         throw new AuditExecutionError({
           type: 'not_found',
-          errorType: 'Website Root Page Not Found (HTTP 404)',
+          errorType: 'Page Not Found (HTTP 404)',
           reason: `HTTP_${rootStatus}`,
-          message: `The website root URL returned HTTP ${rootStatus} (Not Found). A valid website root page is required to perform an SEO audit.`,
+          message: `The website domain exists, but the requested URL returned HTTP ${rootStatus} (Not Found).`,
           url: currentCheckUrl,
           statusCode: rootStatus,
           canRetry: false,
@@ -330,7 +330,7 @@ export class CrawlerEngine {
           type: 'server_error',
           errorType: `Server Error (HTTP ${rootStatus})`,
           reason: `HTTP_${rootStatus}`,
-          message: `The website server returned an internal server error (HTTP ${rootStatus}). The server may be experiencing downtime or misconfiguration.`,
+          message: `The website exists and is reachable, but the server returned an error (HTTP ${rootStatus}). The server may be experiencing downtime or temporary misconfiguration.`,
           url: currentCheckUrl,
           statusCode: rootStatus,
           canRetry: true,
@@ -339,9 +339,9 @@ export class CrawlerEngine {
       if (rootStatus === 401 || rootStatus === 403) {
         throw new AuditExecutionError({
           type: 'forbidden',
-          errorType: `Access Denied / Forbidden (HTTP ${rootStatus})`,
+          errorType: `Access Denied (HTTP ${rootStatus})`,
           reason: `HTTP_${rootStatus}`,
-          message: `The website blocked crawler access with HTTP ${rootStatus} (${rootStatus === 403 ? 'Forbidden' : 'Unauthorized'}). The server or firewall denied access to this crawler.`,
+          message: `The website exists, but crawler access was denied (HTTP ${rootStatus} ${rootStatus === 403 ? 'Forbidden' : 'Unauthorized'}). The server or firewall blocked automated crawler access.`,
           url: currentCheckUrl,
           statusCode: rootStatus,
           canRetry: false,

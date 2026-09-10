@@ -188,14 +188,16 @@ export const AuditInput: React.FC<AuditInputProps> = ({
 
                 <div className="pt-2 border-t border-red-200/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px] text-red-600">
                   <span>
-                    {errorDetails?.type === 'dns_failed'
-                      ? 'Verify that the domain name is typed correctly and has active DNS A/AAAA records.'
+                    {errorDetails?.reason === 'NXDOMAIN' || errorDetails?.reason === 'ENOTFOUND' || errorDetails?.type === 'dns_failed'
+                      ? 'Website Not Found: Check that the domain name is spelled correctly and has active DNS records.'
                       : errorDetails?.type === 'restricted_ip'
                       ? 'Localhost, private loopback, and internal network addresses cannot be audited.'
-                      : errorDetails?.type === 'connection_refused'
-                      ? 'The target web server refused connection on port 80/443.'
-                      : errorDetails?.type === 'timeout'
-                      ? 'The website took more than 12 seconds to respond to connection requests.'
+                      : errorDetails?.type === 'connection_refused' || errorDetails?.type === 'timeout' || errorDetails?.type === 'unreachable'
+                      ? 'Website Could Not Be Reached: The server is offline, unreachable, or refused the connection.'
+                      : errorDetails?.type === 'forbidden' || errorDetails?.reason === 'HTTP_403' || errorDetails?.reason === 'HTTP_401'
+                      ? 'Website exists, but blocked automated crawlers with HTTP 403 (Access Denied).'
+                      : errorDetails?.type === 'not_found' || errorDetails?.reason === 'HTTP_404'
+                      ? 'Domain exists, but the requested page returned HTTP 404 (Not Found).'
                       : errorDetails?.type === 'redirect_loop'
                       ? 'The website redirected repeatedly in an infinite circular loop.'
                       : 'FWSC performs genuine live HTTP crawls and never fabricates simulated data for unreachable sites.'}
