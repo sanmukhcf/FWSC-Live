@@ -23,6 +23,45 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ audit, onNavigateTab, 
 
   return (
     <div className="space-y-6">
+      {/* Partial Audit / Rate Limit Notification Banner */}
+      {(audit.isPartial || audit.rateLimitInfo) && (
+        <div id="partial-audit-banner" className="bg-amber-50 rounded-2xl border border-amber-200 p-5 shadow-xs">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-xl bg-amber-100 text-amber-800 shrink-0">
+              <AlertTriangle className="w-5 h-5 text-amber-700" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <h4 className="font-['Poppins'] font-bold text-sm text-amber-900">
+                  Partial Audit (Rate Limiting Throttled by Host)
+                </h4>
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-amber-200/80 text-amber-900 font-bold border border-amber-300">
+                  HTTP 429
+                </span>
+              </div>
+              <p className="text-xs text-amber-800 leading-relaxed">
+                {audit.rateLimitInfo?.message ||
+                  'The target website rate-limited automated crawler requests. Crawling was halted safely to respect host server policies.'}
+              </p>
+              <div className="flex items-center gap-3 mt-3 pt-3 border-t border-amber-200 text-xs text-amber-900 flex-wrap">
+                <span className="bg-white/80 px-2.5 py-1 rounded-md border border-amber-200 font-medium">
+                  Pages Analyzed: <strong>{audit.rateLimitInfo?.pagesAnalyzed ?? audit.pagesCrawledCount}</strong>
+                </span>
+                <span className="bg-white/80 px-2.5 py-1 rounded-md border border-amber-200 font-medium">
+                  Pages Rate Limited: <strong>{audit.rateLimitInfo?.pagesRateLimited ?? 0}</strong>
+                </span>
+                <span className="bg-white/80 px-2.5 py-1 rounded-md border border-amber-200 font-medium">
+                  Pages Remaining: <strong>{audit.rateLimitInfo?.pagesRemaining ?? 0}</strong>
+                </span>
+                <span className="text-[11px] text-amber-700 ml-auto">
+                  Scores calculated on verified crawled data only
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Banner: Overall Health Score & Core Metrics */}
       <div className="bg-white rounded-2xl border border-[#E5E5E5] p-6 sm:p-8 shadow-xs">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">

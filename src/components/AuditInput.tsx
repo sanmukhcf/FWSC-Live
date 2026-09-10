@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { Globe, Settings, ArrowRight, ShieldAlert, Clock, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { addRecentWebsite } from '../utils/recentWebsites';
+import { Globe, Settings, ArrowRight, ShieldAlert, Clock, CheckCircle2, AlertTriangle, RotateCcw } from 'lucide-react';
 import type { AuditErrorDetails } from '../types';
 
 interface AuditInputProps {
@@ -41,7 +40,6 @@ export const AuditInput: React.FC<AuditInputProps> = ({
 
     try {
       new URL(trimmed);
-      addRecentWebsite(trimmed);
       onStartAudit(trimmed, maxPages);
     } catch {
       setLocalError('Please enter a valid URL (e.g., https://yourwebsite.com).');
@@ -54,6 +52,19 @@ export const AuditInput: React.FC<AuditInputProps> = ({
     if (onSelectRecentWebsite) {
       onSelectRecentWebsite(recentUrl);
     }
+  };
+
+  const handleRetryAudit = () => {
+    let trimmed = url.trim();
+    if (!trimmed && errorDetails?.url) {
+      trimmed = errorDetails.url;
+      setUrl(trimmed);
+    }
+    if (!trimmed) return;
+    if (!/^https?:\/\//i.test(trimmed)) {
+      trimmed = 'https://' + trimmed;
+    }
+    onStartAudit(trimmed, maxPages);
   };
 
   return (
@@ -107,43 +118,94 @@ export const AuditInput: React.FC<AuditInputProps> = ({
 
           {/* Error Message & Technical Breakdown */}
           {(localError || error || errorDetails) && (
-            <div id="audit-error-card" className="bg-red-50/90 rounded-xl p-4 border border-red-200 text-left space-y-2">
-              <div className="flex items-start gap-2.5 text-sm text-red-700 font-semibold">
-                <ShieldAlert className="w-5 h-5 shrink-0 text-red-600 mt-0.5" />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span>{errorDetails?.errorType || 'Audit Could Not Proceed'}</span>
-                    {errorDetails?.reason && (
-                      <span className="font-mono text-[11px] px-2 py-0.5 bg-red-100 text-red-800 rounded font-bold border border-red-200">
-                        {errorDetails.reason}
+            errorDetails?.type === 'rate_limited' || errorDetails?.statusCode === 429 ? (
+              <div id="audit-ratelimit-card" className="bg-amber-50/95 rounded-xl p-4 border border-amber-300 text-left space-y-3">
+                <div className="flex items-start gap-2.5 text-sm text-amber-900 font-semibold">
+                  <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600 mt-0.5" />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-['Poppins'] font-bold text-amber-950">Website Reachable • Server Rate-Limited (HTTP 429)</span>
+                      <span className="font-mono text-[11px] px-2 py-0.5 bg-amber-200/80 text-amber-900 rounded font-bold border border-amber-300">
+                        HTTP 429
                       </span>
-                    )}
+                    </div>
+                    <p className="text-xs text-amber-900 font-normal mt-1 leading-relaxed">
+                      {errorDetails?.message || 'The website domain exists and is reachable, but the server temporarily throttled automated crawler requests.'}
+                    </p>
                   </div>
-                  <p className="text-xs text-red-700 font-normal mt-1 leading-relaxed">
-                    {localError || errorDetails?.message || error}
-                  </p>
+                </div>
+
+                {errorDetails?.rateLimitInfo && (
+                  <div className="grid grid-cols-3 gap-2 py-1 text-center text-xs">
+                    <div className="bg-white/80 border border-amber-200 rounded-lg p-2">
+                      <div className="text-[11px] text-amber-700 font-medium">Pages Analyzed</div>
+                      <div className="text-sm font-bold text-amber-950">{errorDetails.rateLimitInfo.pagesAnalyzed}</div>
+                    </div>
+                    <div className="bg-white/80 border border-amber-200 rounded-lg p-2">
+                      <div className="text-[11px] text-amber-700 font-medium">Pages Throttled</div>
+                      <div className="text-sm font-bold text-amber-950">{errorDetails.rateLimitInfo.pagesRateLimited}</div>
+                    </div>
+                    <div className="bg-white/80 border border-amber-200 rounded-lg p-2">
+                      <div className="text-[11px] text-amber-700 font-medium">Pages Queued</div>
+                      <div className="text-sm font-bold text-amber-950">{errorDetails.rateLimitInfo.pagesRemaining}</div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-2 border-t border-amber-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[11px] text-amber-800">
+                  <span>
+                    The target server returned HTTP 429 to protect its capacity. You can wait a moment and try again.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleRetryAudit}
+                    disabled={isLoading}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs transition-colors shrink-0 shadow-2xs cursor-pointer disabled:opacity-50"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Retry Audit</span>
+                  </button>
                 </div>
               </div>
+            ) : (
+              <div id="audit-error-card" className="bg-red-50/90 rounded-xl p-4 border border-red-200 text-left space-y-2">
+                <div className="flex items-start gap-2.5 text-sm text-red-700 font-semibold">
+                  <ShieldAlert className="w-5 h-5 shrink-0 text-red-600 mt-0.5" />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span>{errorDetails?.errorType || 'Audit Could Not Proceed'}</span>
+                      {errorDetails?.reason && (
+                        <span className="font-mono text-[11px] px-2 py-0.5 bg-red-100 text-red-800 rounded font-bold border border-red-200">
+                          {errorDetails.reason}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-red-700 font-normal mt-1 leading-relaxed">
+                      {localError || errorDetails?.message || error}
+                    </p>
+                  </div>
+                </div>
 
-              <div className="pt-2 border-t border-red-200/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px] text-red-600">
-                <span>
-                  {errorDetails?.type === 'dns_failed'
-                    ? 'Verify that the domain name is typed correctly and has active DNS A/AAAA records.'
-                    : errorDetails?.type === 'restricted_ip'
-                    ? 'Localhost, private loopback, and internal network addresses cannot be audited.'
-                    : errorDetails?.type === 'connection_refused'
-                    ? 'The target web server refused connection on port 80/443.'
-                    : errorDetails?.type === 'timeout'
-                    ? 'The website took more than 12 seconds to respond to connection requests.'
-                    : errorDetails?.type === 'redirect_loop'
-                    ? 'The website redirected repeatedly in an infinite circular loop.'
-                    : 'FWSC performs genuine live HTTP crawls and never fabricates simulated data for unreachable sites.'}
-                </span>
-                <span className="shrink-0 font-medium text-red-700 bg-red-100/80 px-2 py-0.5 rounded">
-                  No simulated report created
-                </span>
+                <div className="pt-2 border-t border-red-200/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px] text-red-600">
+                  <span>
+                    {errorDetails?.type === 'dns_failed'
+                      ? 'Verify that the domain name is typed correctly and has active DNS A/AAAA records.'
+                      : errorDetails?.type === 'restricted_ip'
+                      ? 'Localhost, private loopback, and internal network addresses cannot be audited.'
+                      : errorDetails?.type === 'connection_refused'
+                      ? 'The target web server refused connection on port 80/443.'
+                      : errorDetails?.type === 'timeout'
+                      ? 'The website took more than 12 seconds to respond to connection requests.'
+                      : errorDetails?.type === 'redirect_loop'
+                      ? 'The website redirected repeatedly in an infinite circular loop.'
+                      : 'FWSC performs genuine live HTTP crawls and never fabricates simulated data for unreachable sites.'}
+                  </span>
+                  <span className="shrink-0 font-medium text-red-700 bg-red-100/80 px-2 py-0.5 rounded">
+                    No simulated report created
+                  </span>
+                </div>
               </div>
-            </div>
+            )
           )}
 
           {/* Recent Websites Section (User-specific history only, no demo presets) */}

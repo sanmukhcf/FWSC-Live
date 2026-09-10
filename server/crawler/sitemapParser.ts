@@ -1,4 +1,5 @@
 import type { SitemapAnalysis } from '../../src/types';
+import { CRAWLER_USER_AGENT } from './constants';
 
 export class SitemapParser {
   static async discoverAndParse(baseUrl: string, declaredSitemaps: string[] = []): Promise<SitemapAnalysis> {
@@ -40,7 +41,7 @@ export class SitemapParser {
         const response = await fetch(sitemapUrl, {
           signal: controller.signal,
           headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; DigiVirusBot/1.0; +https://digivirus.in/bot)',
+            'User-Agent': CRAWLER_USER_AGENT,
             'Accept': 'application/xml,text/xml,*/*',
           },
         });

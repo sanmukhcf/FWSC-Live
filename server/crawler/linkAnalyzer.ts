@@ -1,4 +1,5 @@
 import type { CrawledPage, BrokenLink } from '../../src/types';
+import { CRAWLER_USER_AGENT } from './constants';
 
 export class LinkAnalyzer {
   static async analyzeLinks(
@@ -89,7 +90,7 @@ export class LinkAnalyzer {
           const res = await fetch(extUrl, {
             method: 'HEAD',
             signal: controller.signal,
-            headers: { 'User-Agent': 'DigiVirusBot/1.0' },
+            headers: { 'User-Agent': CRAWLER_USER_AGENT },
           });
           clearTimeout(timeoutId);
 

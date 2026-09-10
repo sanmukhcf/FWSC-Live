@@ -7,7 +7,22 @@ import { DuplicateContentAnalyzer } from './duplicateContent';
 import { RulesEngine } from './rulesEngine';
 import { ScoreCalculator } from './scoreCalculator';
 import { resolveAndValidateDns } from '../security';
+import { CRAWLER_USER_AGENT } from './constants';
 import type { CrawledPage, AuditResult, CrawlProgress, AuditErrorDetails } from '../../src/types';
+
+function parseRetryAfter(headerValue: string | null): number | null {
+  if (!headerValue) return null;
+  const seconds = parseInt(headerValue, 10);
+  if (!isNaN(seconds) && seconds > 0 && seconds <= 60) {
+    return seconds * 1000;
+  }
+  const dateMs = Date.parse(headerValue);
+  if (!isNaN(dateMs)) {
+    const diff = dateMs - Date.now();
+    if (diff > 0 && diff <= 60000) return diff;
+  }
+  return null;
+}
 
 export interface CrawlerProgressCallback {
   (progress: CrawlProgress): void;
@@ -124,111 +139,149 @@ export class CrawlerEngine {
       const maxRedirectHops = 10;
 
       while (redirectHops < maxRedirectHops) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        let res: Response | null = null;
+        let attempt = 0;
+        const maxAttempts = 3;
 
-        try {
-          const res = await fetch(currentCheckUrl, {
-            method: 'GET',
-            signal: controller.signal,
-            redirect: 'manual',
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (compatible; DigiVirusBot/1.0; +https://digivirus.in/bot)',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            },
-          });
-          clearTimeout(timeoutId);
+        while (attempt < maxAttempts) {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-          if (res.status >= 300 && res.status < 400) {
-            redirectHops++;
-            const location = res.headers.get('location');
-            if (!location) {
-              initialResponse = res;
-              break;
-            }
+          try {
+            res = await fetch(currentCheckUrl, {
+              method: 'GET',
+              signal: controller.signal,
+              redirect: 'manual',
+              headers: {
+                'User-Agent': CRAWLER_USER_AGENT,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              },
+            });
+            clearTimeout(timeoutId);
 
-            const nextUrl = new URL(location, currentCheckUrl).toString();
-
-            // Detect redirect loop
-            if (redirectChain.includes(nextUrl)) {
-              throw new AuditExecutionError({
-                type: 'redirect_loop',
-                errorType: 'Redirect Loop Detected',
-                reason: 'ERR_TOO_MANY_REDIRECTS',
-                message: `Target website has a circular redirect loop: ${[...redirectChain, nextUrl].join(' -> ')}`,
-                url: this.targetUrl,
-                statusCode: res.status,
-              });
-            }
-
-            redirectChain.push(nextUrl);
-
-            // Re-check DNS if redirect changes hostname
-            const nextParsed = new URL(nextUrl);
-            if (nextParsed.hostname.toLowerCase() !== new URL(currentCheckUrl).hostname.toLowerCase()) {
-              const nextDns = await resolveAndValidateDns(nextParsed.hostname);
-              if (!nextDns.isValid) {
-                throw new AuditExecutionError({
-                  type: nextDns.reason === 'SSRF_RESTRICTED_IP' ? 'restricted_ip' : 'dns_failed',
-                  errorType: nextDns.errorType || 'DNS Resolution Failed on Redirect',
-                  reason: nextDns.reason || 'ENOTFOUND',
-                  message: `Redirect target domain (${nextParsed.hostname}) could not be resolved.`,
-                  url: nextUrl,
+            if (res.status === 429) {
+              attempt++;
+              if (attempt < maxAttempts) {
+                const retryAfterMs = parseRetryAfter(res.headers.get('retry-after')) || (attempt * 2000);
+                emit('connecting', `Server returned HTTP 429 (Rate Limited). Retrying in ${(retryAfterMs / 1000).toFixed(0)}s (attempt ${attempt}/${maxAttempts})...`, 1, 0, currentCheckUrl, 14, {
+                  message: `Received HTTP 429 on ${currentCheckUrl}. Backing off ${(retryAfterMs / 1000).toFixed(0)}s before retry ${attempt + 1}...`,
+                  type: 'warn',
                 });
+                await new Promise(resolve => setTimeout(resolve, retryAfterMs));
+                continue;
               }
             }
 
-            emit('redirects', `Following HTTP ${res.status} redirect...`, 1, 0, nextUrl, 15, {
-              message: `Redirect ${res.status}: ${currentCheckUrl} -> ${nextUrl}`,
-              type: 'info',
-            });
+            break;
+          } catch (err: any) {
+            clearTimeout(timeoutId);
+            if (err instanceof AuditExecutionError) throw err;
 
-            currentCheckUrl = nextUrl;
-            continue;
-          }
-
-          initialResponse = res;
-          break;
-        } catch (err: any) {
-          clearTimeout(timeoutId);
-          if (err instanceof AuditExecutionError) throw err;
-
-          const code = err.code || (err.name === 'AbortError' ? 'ETIMEDOUT' : 'NETWORK_ERROR');
-          if (code === 'ECONNREFUSED') {
+            const code = err.code || (err.name === 'AbortError' ? 'ETIMEDOUT' : 'NETWORK_ERROR');
+            if (code === 'ECONNREFUSED') {
+              throw new AuditExecutionError({
+                type: 'connection_refused',
+                errorType: 'Connection Refused',
+                reason: 'ECONNREFUSED',
+                message: 'Website server refused the connection. The server may be offline or port is closed.',
+                url: currentCheckUrl,
+                canRetry: true,
+              });
+            }
+            if (code === 'ETIMEDOUT' || err.name === 'AbortError') {
+              throw new AuditExecutionError({
+                type: 'timeout',
+                errorType: 'Connection Timed Out',
+                reason: 'ETIMEDOUT',
+                message: 'Website server took too long to respond (timeout of 12 seconds exceeded).',
+                url: currentCheckUrl,
+                canRetry: true,
+              });
+            }
+            if (code === 'ENETUNREACH' || code === 'EHOSTUNREACH') {
+              throw new AuditExecutionError({
+                type: 'unreachable',
+                errorType: 'Server Unreachable',
+                reason: code,
+                message: 'Website server is unreachable over the network.',
+                url: currentCheckUrl,
+                canRetry: true,
+              });
+            }
             throw new AuditExecutionError({
               type: 'connection_refused',
-              errorType: 'Connection Refused',
-              reason: 'ECONNREFUSED',
-              message: 'Website server refused the connection. The server may be offline or port is closed.',
-              url: currentCheckUrl,
-            });
-          }
-          if (code === 'ETIMEDOUT' || err.name === 'AbortError') {
-            throw new AuditExecutionError({
-              type: 'timeout',
-              errorType: 'Connection Timed Out',
-              reason: 'ETIMEDOUT',
-              message: 'Website server took too long to respond (timeout of 12 seconds exceeded).',
-              url: currentCheckUrl,
-            });
-          }
-          if (code === 'ENETUNREACH' || code === 'EHOSTUNREACH') {
-            throw new AuditExecutionError({
-              type: 'unreachable',
-              errorType: 'Server Unreachable',
+              errorType: 'Connection Failed',
               reason: code,
-              message: 'Website server is unreachable over the network.',
+              message: `Failed to connect to website: ${err.message || code}`,
               url: currentCheckUrl,
+              canRetry: true,
             });
           }
+        }
+
+        if (!res) {
           throw new AuditExecutionError({
             type: 'connection_refused',
             errorType: 'Connection Failed',
-            reason: code,
-            message: `Failed to connect to website: ${err.message || code}`,
+            reason: 'NO_RESPONSE',
+            message: 'Failed to obtain a response from website server.',
             url: currentCheckUrl,
+            canRetry: true,
           });
         }
+
+        if (res.status >= 300 && res.status < 400) {
+          redirectHops++;
+          const location = res.headers.get('location');
+          if (!location) {
+            initialResponse = res;
+            break;
+          }
+
+          const nextUrl = new URL(location, currentCheckUrl).toString();
+
+          // Detect redirect loop
+          if (redirectChain.includes(nextUrl)) {
+            throw new AuditExecutionError({
+              type: 'redirect_loop',
+              errorType: 'Redirect Loop Detected',
+              reason: 'ERR_TOO_MANY_REDIRECTS',
+              message: `Target website has a circular redirect loop: ${[...redirectChain, nextUrl].join(' -> ')}`,
+              url: this.targetUrl,
+              statusCode: res.status,
+              canRetry: false,
+            });
+          }
+
+          redirectChain.push(nextUrl);
+
+          // Re-check DNS if redirect changes hostname
+          const nextParsed = new URL(nextUrl);
+          if (nextParsed.hostname.toLowerCase() !== new URL(currentCheckUrl).hostname.toLowerCase()) {
+            const nextDns = await resolveAndValidateDns(nextParsed.hostname);
+            if (!nextDns.isValid) {
+              throw new AuditExecutionError({
+                type: nextDns.reason === 'SSRF_RESTRICTED_IP' ? 'restricted_ip' : 'dns_failed',
+                errorType: nextDns.errorType || 'DNS Resolution Failed on Redirect',
+                reason: nextDns.reason || 'ENOTFOUND',
+                message: `Redirect target domain (${nextParsed.hostname}) could not be resolved.`,
+                url: nextUrl,
+                canRetry: false,
+              });
+            }
+          }
+
+          emit('redirects', `Following HTTP ${res.status} redirect...`, 1, 0, nextUrl, 15, {
+            message: `Redirect ${res.status}: ${currentCheckUrl} -> ${nextUrl}`,
+            type: 'info',
+          });
+
+          currentCheckUrl = nextUrl;
+          continue;
+        }
+
+        initialResponse = res;
+        break;
       }
 
       if (!initialResponse) {
@@ -238,49 +291,60 @@ export class CrawlerEngine {
           reason: 'ERR_TOO_MANY_REDIRECTS',
           message: 'Target website exceeded maximum limit of 10 consecutive redirects.',
           url: this.targetUrl,
+          canRetry: false,
         });
       }
 
       // Check root response status code
       const rootStatus = initialResponse.status;
+      if (rootStatus === 429) {
+        throw new AuditExecutionError({
+          type: 'rate_limited',
+          errorType: 'Rate Limited (HTTP 429)',
+          reason: 'HTTP_429',
+          message: 'The website is reachable, but the server temporarily limited crawler requests (HTTP 429). The website firewall or host is actively rate-limiting automated requests.',
+          url: currentCheckUrl,
+          statusCode: 429,
+          canRetry: true,
+          rateLimitInfo: {
+            pagesAnalyzed: 0,
+            pagesRateLimited: 1,
+            pagesRemaining: this.maxPages,
+            retryAfterSeconds: 30,
+          },
+        });
+      }
       if (rootStatus === 404 || rootStatus === 410) {
         throw new AuditExecutionError({
-          type: 'http_error',
-          errorType: 'Website Not Found',
+          type: 'not_found',
+          errorType: 'Website Root Page Not Found (HTTP 404)',
           reason: `HTTP_${rootStatus}`,
           message: `The website root URL returned HTTP ${rootStatus} (Not Found). A valid website root page is required to perform an SEO audit.`,
           url: currentCheckUrl,
           statusCode: rootStatus,
+          canRetry: false,
         });
       }
       if (rootStatus >= 500) {
         throw new AuditExecutionError({
-          type: 'http_error',
-          errorType: 'Server Error',
+          type: 'server_error',
+          errorType: `Server Error (HTTP ${rootStatus})`,
           reason: `HTTP_${rootStatus}`,
-          message: `The website server returned an internal server error (HTTP ${rootStatus}).`,
+          message: `The website server returned an internal server error (HTTP ${rootStatus}). The server may be experiencing downtime or misconfiguration.`,
           url: currentCheckUrl,
           statusCode: rootStatus,
+          canRetry: true,
         });
       }
       if (rootStatus === 401 || rootStatus === 403) {
         throw new AuditExecutionError({
-          type: 'http_error',
-          errorType: 'Access Denied / Forbidden',
+          type: 'forbidden',
+          errorType: `Access Denied / Forbidden (HTTP ${rootStatus})`,
           reason: `HTTP_${rootStatus}`,
-          message: `The website blocked crawler access with HTTP ${rootStatus} (${rootStatus === 403 ? 'Forbidden' : 'Unauthorized'}).`,
+          message: `The website blocked crawler access with HTTP ${rootStatus} (${rootStatus === 403 ? 'Forbidden' : 'Unauthorized'}). The server or firewall denied access to this crawler.`,
           url: currentCheckUrl,
           statusCode: rootStatus,
-        });
-      }
-      if (rootStatus === 429) {
-        throw new AuditExecutionError({
-          type: 'http_error',
-          errorType: 'Rate Limited',
-          reason: 'HTTP_429',
-          message: 'The website server returned HTTP 429 (Too Many Requests). Crawler access is rate-limited.',
-          url: currentCheckUrl,
-          statusCode: 429,
+          canRetry: false,
         });
       }
 
@@ -327,7 +391,10 @@ export class CrawlerEngine {
       // Step 6: Crawling Pages
       const crawledPages: CrawledPage[] = [];
       const pageTexts: Array<{ url: string; text: string }> = [];
-      let rateLimitCount = 0;
+      let consecutiveRateLimits = 0;
+      let totalRateLimitedPages = 0;
+      let crawlDelayMs = 250;
+      let isPartialCrawl = false;
 
       emit('crawling', 'Starting website crawl...', queue.discoveredCount, 0, this.targetUrl, 30, {
         message: 'Beginning deep page crawling and DOM analysis',
@@ -348,13 +415,33 @@ export class CrawlerEngine {
         continue;
       }
 
-      // Check if target website is returning consecutive 429s (rate limited)
-      if (rateLimitCount >= 4) {
-        emit('crawling', 'Crawl paused: Target website is rate-limiting requests (HTTP 429)', queue.discoveredCount, crawledPages.length, currentUrl, 70, {
-          message: 'Target server triggered rate limits (HTTP 429). Halting crawl safely to protect target server.',
-          type: 'warn',
-        });
-        break;
+      // Check if target website is returning persistent 429s (rate limited)
+      if (consecutiveRateLimits >= 3 || totalRateLimitedPages >= 4) {
+        const successfulPages = crawledPages.filter(p => p.statusCode >= 200 && p.statusCode < 400);
+        if (successfulPages.length > 0) {
+          isPartialCrawl = true;
+          emit('crawling', `Crawl safely paused: Server rate-limiting requests. Generating partial audit for ${successfulPages.length} analyzed page(s)...`, queue.discoveredCount, crawledPages.length, currentUrl, 72, {
+            message: `Target server rate limit reached (HTTP 429). Halting crawl safely and preserving verified results for ${successfulPages.length} page(s).`,
+            type: 'warn',
+          });
+          break;
+        } else {
+          throw new AuditExecutionError({
+            type: 'rate_limited',
+            errorType: 'Rate Limited (HTTP 429)',
+            reason: 'HTTP_429',
+            message: 'The website is reachable, but the server temporarily limited crawler requests (HTTP 429). No pages could be analyzed.',
+            url: this.targetUrl,
+            statusCode: 429,
+            canRetry: true,
+            rateLimitInfo: {
+              pagesAnalyzed: 0,
+              pagesRateLimited: totalRateLimitedPages,
+              pagesRemaining: queue.queueLength + 1,
+              retryAfterSeconds: 30,
+            },
+          });
+        }
       }
 
       const crawlPercent = 30 + Math.floor((crawledPages.length / this.maxPages) * 45);
@@ -376,16 +463,44 @@ export class CrawlerEngine {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-        const response = await fetch(currentUrl, {
+        let response = await fetch(currentUrl, {
           signal: controller.signal,
           redirect: 'follow',
           headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; DigiVirusBot/1.0; +https://digivirus.in/bot)',
+            'User-Agent': CRAWLER_USER_AGENT,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
           },
         });
         clearTimeout(timeoutId);
+
+        // If 429 encountered, attempt one respectful backoff retry if not in consecutive limit cascade
+        if (response.status === 429 && consecutiveRateLimits < 2) {
+          const retryAfterMs = parseRetryAfter(response.headers.get('retry-after')) || 2500;
+          emit('crawling', `HTTP 429 received on ${currentUrl.slice(0, 45)}. Backing off ${(retryAfterMs / 1000).toFixed(0)}s...`, queue.discoveredCount, crawledPages.length, currentUrl, crawlPercent, {
+            message: `Target server issued HTTP 429 on ${currentUrl}. Pausing ${(retryAfterMs / 1000).toFixed(0)}s before single retry...`,
+            type: 'warn',
+          });
+          await new Promise(resolve => setTimeout(resolve, retryAfterMs));
+
+          const retryController = new AbortController();
+          const retryTimeoutId = setTimeout(() => retryController.abort(), 12000);
+          try {
+            const retryRes = await fetch(currentUrl, {
+              signal: retryController.signal,
+              redirect: 'follow',
+              headers: {
+                'User-Agent': CRAWLER_USER_AGENT,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+              },
+            });
+            clearTimeout(retryTimeoutId);
+            response = retryRes;
+          } catch {
+            clearTimeout(retryTimeoutId);
+          }
+        }
 
         const loadTimeMs = Date.now() - fetchStart;
         const statusCode = response.status;
@@ -400,9 +515,11 @@ export class CrawlerEngine {
         else if (statusCode >= 500) statusType = '5xx';
 
         if (statusCode === 429) {
-          rateLimitCount++;
+          consecutiveRateLimits++;
+          totalRateLimitedPages++;
+          crawlDelayMs = Math.min(2000, crawlDelayMs + 400);
         } else {
-          rateLimitCount = 0;
+          consecutiveRateLimits = 0;
         }
 
         // Only parse HTML responses
@@ -515,17 +632,35 @@ export class CrawlerEngine {
         });
       }
 
-      // Polite rate-limiting delay between requests (180ms)
-      await new Promise(resolve => setTimeout(resolve, 180));
+      // Polite rate-limiting delay between requests
+      await new Promise(resolve => setTimeout(resolve, crawlDelayMs));
     }
 
     if (crawledPages.length === 0) {
+      if (totalRateLimitedPages > 0) {
+        throw new AuditExecutionError({
+          type: 'rate_limited',
+          errorType: 'Rate Limited (HTTP 429)',
+          reason: 'HTTP_429',
+          message: 'The website is reachable, but the server temporarily limited crawler requests (HTTP 429). No pages could be analyzed.',
+          url: this.targetUrl,
+          statusCode: 429,
+          canRetry: true,
+          rateLimitInfo: {
+            pagesAnalyzed: 0,
+            pagesRateLimited: totalRateLimitedPages,
+            pagesRemaining: queue.queueLength + 1,
+            retryAfterSeconds: 30,
+          },
+        });
+      }
       throw new AuditExecutionError({
         type: 'crawl_error',
         errorType: 'Crawl Incomplete',
         reason: 'NO_PAGES_CRAWLED',
         message: 'No valid pages could be crawled from the target website.',
         url: this.targetUrl,
+        canRetry: true,
       });
     }
 
@@ -572,6 +707,9 @@ export class CrawlerEngine {
     const auditId = 'audit_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const durationMs = Date.now() - startTime;
 
+    const isPartial = isPartialCrawl || totalRateLimitedPages > 0;
+    const successfulPagesCount = pagesWithCounts.filter(p => p.statusCode >= 200 && p.statusCode < 400).length;
+
     const auditResult: AuditResult = {
       id: auditId,
       websiteUrl: this.targetUrl,
@@ -583,6 +721,13 @@ export class CrawlerEngine {
       scores,
       pagesCrawledCount: pagesWithCounts.length,
       pagesDiscoveredCount: queue.discoveredCount,
+      isPartial,
+      rateLimitInfo: isPartial ? {
+        pagesAnalyzed: successfulPagesCount,
+        pagesRateLimited: totalRateLimitedPages,
+        pagesRemaining: queue.queueLength,
+        message: `The host server rate-limited automated requests (HTTP 429). The crawler stopped safely to protect server resources and compiled verified audit metrics for ${successfulPagesCount} analyzed page(s).`,
+      } : undefined,
       issueCounts: {
         total: criticalCount + warningCount + infoCount,
         critical: criticalCount,

@@ -17,6 +17,7 @@ import { HistoryList } from './components/HistoryList';
 import {
   getRecentWebsites,
   addRecentWebsite,
+  removeRecentWebsite,
   getUserAuditIds,
   addUserAuditId,
   removeUserAuditId,
@@ -97,10 +98,7 @@ export default function App() {
     setIsLoading(true);
     cleanupStreams();
 
-    // Persist to user's recent websites history immediately when starting audit
-    const updatedRecents = addRecentWebsite(targetUrl);
-    setRecentWebsites(updatedRecents);
-
+    // Clear previous errors and initiate crawl
     try {
       const res = await fetch('/api/audit/start', {
         method: 'POST',
@@ -114,6 +112,8 @@ export default function App() {
         setErrorMessage(data.error || 'Failed to initiate crawl');
         setErrorDetails(data.errorDetails || null);
         setIsLoading(false);
+        const cleaned = removeRecentWebsite(targetUrl);
+        setRecentWebsites(cleaned);
         return;
       }
 
@@ -157,6 +157,8 @@ export default function App() {
               setErrorMessage(payload.error || 'Crawl execution failed.');
               setErrorDetails(payload.errorDetails || null);
               setActiveJob(null);
+              const cleaned = removeRecentWebsite(targetUrl);
+              setRecentWebsites(cleaned);
             }
           } catch (e) {
             console.error('SSE parse error:', e);
@@ -202,6 +204,10 @@ export default function App() {
           setErrorMessage(data.error || 'Crawl failed');
           setErrorDetails(data.errorDetails || null);
           setActiveJob(null);
+          if (data.url) {
+            const cleaned = removeRecentWebsite(data.url);
+            setRecentWebsites(cleaned);
+          }
         }
       } catch {
         // continue polling
